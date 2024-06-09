@@ -1,24 +1,31 @@
-from tkinter import Tk, Label, StringVar, Frame, Button, W, LEFT, Canvas, Scrollbar, VERTICAL
+from tkinter import Tk, Label, StringVar, Frame, Button, W, LEFT, Canvas, Scrollbar, VERTICAL, simpledialog, messagebox
 from datetime import datetime
 import math
 import requests
 try:
-    import winsound
-except ImportError:
+    import winsound     # winsound is specific to Windows
+except ImportError:     # Use 'beep' for non-Windows systems
     import os
     def playsound(frequency, duration):
         #apt-get install beep
-        os.system('beep -f %s -l %s' % (frequency, duration))
-else:
+        try:
+            os.system('beep -f %s -l %s' % (frequency, duration))
+        except Exception as e:
+            print(f"Error playing sound: {e}")
+
+else: # Import winsound successful for Windows systems
     def playsound(frequency, duration):
-        winsound.Beep(frequency, duration)
+        try:
+            winsound.Beep(frequency, duration)
+        except RuntimeError as e:
+            print(f"Error playing sound: {e}")
 
 root = Tk()
 screen_width = root.winfo_screenwidth()
 screen_height = root.winfo_screenheight()
 print(screen_width, screen_height)
 
-SHEET_NAME = "https://docs.google.com/spreadsheets/d/1cQBK0OURJGcY_jKpYPqLm_SK-X_d5cBsFtKVhB3dhJo"
+SHEET_NAME = ""
 FONT_SETS = "Arial 20"
 FONT_CURRENT_SET ="Arial 50 bold"
 if screen_width < 1500:
@@ -101,7 +108,8 @@ def counter_display():
 
 
 def set_display(set_num):
-  if Dist_text[set_num] == "REST":
+  # Remove trailing whitespace and make string comparison case-insensitive
+  if Dist_text[set_num].strip().upper() == "REST":
       return Dist_text[set_num] + " @" + Ti_text[set_num]
   else:    
       return Rept_text[set_num] + "x" + Dist_text[set_num] + " @" + Ti_text[set_num]
@@ -151,29 +159,84 @@ def btn_stop():
 def update_scrollregion(event):
     SetsCanvas.configure(scrollregion=SetsCanvas.bbox("all"))
 
-Rept_text.append("X")
-Dist_text.append("X")
-Ti_text.append("X")
-Remarks_text.append("X")
+def btn_load():
+    url = simpledialog.askstring("Input", "Enter the Google Sheets URL:", parent=root)
+    if url:
+        load_workout(url)
 
-print("Load workout")
-# Load workout from file
-r = requests.get(SHEET_NAME + "/export?format=csv")
-data = (r.content.decode("utf-8").split("\r\n"))[1:]
-num_of_sets=len(data)
-for r in data:
-    workout_line = r.split(",")
-    if workout_line[1] == "" or workout_line[1] == 0:
-        workout_line[1] = "1"
-    Rept_text.append(workout_line[1])
-    Dist_text.append(workout_line[2])
-    Ti_text.append(workout_line[3])
-    Remarks_text.append(workout_line[4].rstrip('\n'))
+def load_workout(url):
+    global Rept_text, Dist_text, Ti_text, Remarks_text
+    global num_of_sets, current_set_num, current_rept_num
 
-print("Display workout")
-# Display workout
-set_label.append("X")
+    Rept_text.clear()
+    Dist_text.clear()
+    Ti_text.clear()
+    Remarks_text.clear()
 
+    # Load workout from file
+    try:    # Attempt to HTTP request sheet data
+        r = requests.get(url + "/export?format=csv")
+        r.raise_for_status()    # Checks status code of HTTP Request
+        data = (r.content.decode("utf-8").split("\r\n"))[1:]
+
+        print("Load workout")
+        num_of_sets=len(data)
+        for r in data:
+            print(f"Processing line: {r}") # Debug text
+            try:    # Attempt to parse sheet data
+                workout_line = r.split(",")
+                if len(workout_line) < 5:
+                    raise IndexError("Not enough columns")
+                if workout_line[1] == "" or workout_line[1] == 0:
+                    workout_line[1] = "1"
+                Rept_text.append(workout_line[1])
+                Dist_text.append(workout_line[2])
+                Ti_text.append(workout_line[3])
+                Remarks_text.append(workout_line[4].rstrip('\n'))
+            except IndexError as i:     # Error accessing index out of bounds
+                print(f"Error parsing workout data: {i}")
+    except requests.RequestException as r:
+        print(f"Error parsing workout data: {r}")
+        data =[]
+        num_of_sets = 0
+        return False
+
+    # Debug Texts
+    print(f"Rept_text: {len(Rept_text)} items")
+    print(f"Dist_text: {len(Dist_text)} items")
+    print(f"Ti_text: {len(Ti_text)} items")
+    print(f"Remarks_text: {len(Remarks_text)} items")
+
+    update_workout_display()
+    return True
+
+def update_workout_display():
+    global set_label
+    global current_set_num, current_rept_num
+
+    for label in set_label:
+        if isinstance(label, Label):
+            label.destroy()
+
+    set_label = []
+    set_label.append("X")
+
+    for row in range(num_of_sets):
+        try:
+            print(f"Displaying set {row}: {set_display(row)}, {Remarks_text[row]}") # Debug Text
+            l = Label(canvasFrame, text=set_display(row) + "\n" + Remarks_text[row], justify=LEFT, anchor="w", 
+                      bg="blue", fg="white", font=FONT_SETS, borderwidth=2, relief="groove")
+            l.grid(sticky='nswe')
+            set_label.append(l)
+        except IndexError as i:
+            print(f"Error displaying workout: {i}")
+
+    current_set_num = 1
+    current_rept_num = 1
+    current_set_text.set(str(current_rept_num) + "of" + set_display(current_set_num) + "\n" + Remarks_text[current_set_num])
+    timer_text.set(Ti_text[current_set_num])
+
+# Create canvasFrame
 SetsFrame = Frame(root, bg="blue")
 SetsFrame.grid(row=0, column=0, rowspan=2, sticky='nswe')
 SetsFrame.rowconfigure(0, weight=1) 
@@ -185,10 +248,26 @@ SetsCanvas.grid(row=0, column=0, sticky='nswe')
 canvasFrame = Frame(SetsCanvas, bg="blue")
 SetsCanvas.create_window(0, 0, window=canvasFrame, anchor="nw")
 
-for row in range(1,num_of_sets+1):
-    l = Label(canvasFrame, text=set_display(row) + "\n" + Remarks_text[row], justify=LEFT, anchor="w", bg="blue", fg="white", font=FONT_SETS, borderwidth=2, relief="groove")
-    l.grid(sticky='nswe')
-    set_label.append(l)
+# Initialize current_set_text and timer_text
+current_set_text = StringVar()
+timer_text = StringVar()
+
+# Check if SHEET_NAME has data or prompt for URL
+if not SHEET_NAME or not load_workout(SHEET_NAME):
+    while True:
+        url = simpledialog.askstring("Input", "Enter the Google Sheets URL:", parent=root)
+        if url and load_workout(url):
+            break
+        else:
+            messagebox.showerror("Error", "Failed to load from the URL. Please try again.")
+
+# Dummy data
+Rept_text.append("X")
+Dist_text.append("X")
+Ti_text.append("X")
+Remarks_text.append("X")
+
+print("Display workout")
 
 setsScroll = Scrollbar(SetsFrame, orient=VERTICAL)
 setsScroll.config(command=SetsCanvas.yview)
@@ -208,7 +287,7 @@ timer_label = Label(root, textvariable=timer_text, font=FONT_TIMER, width=5, fg=
 timer_text.set(Ti_text[current_set_num])
 timer_label.grid(row=1, column=1, sticky='nsew')
 
-# Dsiplay buttons
+# Display buttons
 bottom_frame = Frame(root)
 bottom_frame.grid(column=1, columnspan=3)
 BRun = Button(bottom_frame, text="Run", font=FONT_BUTTON, command=btn_run)
@@ -217,6 +296,8 @@ BPause = Button(bottom_frame, text="Pause", font=FONT_BUTTON, command=btn_pause,
 BPause.grid(column=2, row=0, padx=30)
 BStop = Button(bottom_frame, text="Stop", font=FONT_BUTTON, command=btn_stop, state='disabled')
 BStop.grid(column=3, row=0, padx=30)
+BLoad = Button(bottom_frame, text="Load", font=FONT_BUTTON, command=btn_load)
+BLoad.grid(column=4, row = 0, padx= 30)
 
 root.grid_columnconfigure(0, weight=1)
 root.grid_columnconfigure(1, weight=2)
@@ -225,6 +306,17 @@ root.grid_rowconfigure(0, weight=1)
 root.grid_rowconfigure(1, weight=1)
 
 root.geometry(str(screen_width-100) + "x" + str(screen_height-100) + '+50+20')
-root.iconbitmap('swimming_workout.ico')
+try:
+    if os.path.isfile("swimming_workout.ico"):
+        root.iconbitmap("swimming_workout.ico")
+        icon_set = True
+    elif os.path.isfile("swimming_workout.bmp"):
+        root.iconbitmap("swimming_workout.bmp")
+        icon_set = True
+    elif os.path.isfile("swimming_workout.xbm"):
+        root.iconbitmap("swimming_workout.xbm")
+        icon_set = True
+except Exception as e:
+    print(f"Failed to set icon: {e}")
 root.title("Swimming Workout Assist")
 root.mainloop()
